@@ -99,6 +99,11 @@
     </select>
     <input id="unTol" type="number" value="30" style="width:74px" title="容差(mm)">
     <label class="muted"><input id="unMin" type="checkbox"> 最少边(2/4/6)</label>
+    <label class="muted"><input id="unPoll" type="checkbox"> 轮询兜底</label>
+    <label class="muted">去重
+      <input id="unDupWin" type="number" value="3" style="width:48px"> s /
+      <input id="unDupTol" type="number" value="10" style="width:52px"> mm
+    </label>
     <button id="unMatch" class="primary">识别</button>
   </div>
   <div id="unCands" class="cands"></div>
@@ -207,8 +212,7 @@
       state.device = device; state.char = ch; state.connected = true;
       setStatus("已连接 " + (device.name || "DISTO") + " · 通知" + started);
       $("btnConn").textContent = "断开";
-      if (state.pollTimer) clearInterval(state.pollTimer);
-      state.pollTimer = setInterval(pollMeas, 700);
+      // 轮询由“轮询兜底”勾选控制
     }catch(e){
       setStatus("连接失败"); toast(e.message || "连接失败");
     }finally{ state.connecting = false; }
@@ -231,6 +235,27 @@
   }
 
   let dbgCount = 0;
+  let recent = [];   // {d, t} 最近接受的测量，用于“短时间内接近值合并”
+
+  function parseDistance(dv){
+    // 只要是 0D 特征上来、浮点距离在合理范围就接受（不按大小/尾字节丢弃真实测量）
+    if (!dv || dv.byteLength < 4) return null;
+    const d = dv.getFloat32(0, true);
+    if (!isFinite(d) || d < 0.05 || d > 200) return null;
+    return d;
+  }
+  function acceptDistance(d){
+    const now = Date.now();
+    const winMs = Math.max(0, Number($("unDupWin").value) || 0) * 1000;
+    const tolM = Math.max(0, Number($("unDupTol").value) || 0) / 1000;
+    recent = recent.filter(x => now - x.t <= winMs);
+    if (winMs > 0 && recent.some(x => Math.abs(d - x.d) <= tolM)) {
+      return false;
+    }
+    recent.push({ d: d, t: now });
+    return true;
+  }
+
   function onMeas(ev){
     const ch = ev.target;
     const dv = ch.value;
@@ -243,20 +268,19 @@
     if (el) el.textContent = "已收到 " + dbgCount + " 包 (" + uuid.slice(4, 8) + "): " + hex;
     state.lastNotify = Date.now();
     if (!uuid.startsWith("3ab1010d")) return;
-    if (dv.byteLength < 4) return;
-    const d = dv.getFloat32(0, true);
-    if (!isFinite(d)) return;
-    handleMeasurement(d);
+    const d = parseDistance(dv);
+    if (d === null) return;
+    if (acceptDistance(d)) handleMeasurement(d);
   }
 
   async function pollMeas(){
     if (!state.connected || state.mode !== "unordered" || !state.receiving) return;
+    if (!$("unPoll").checked) return;
     if (Date.now() - (state.lastNotify || 0) < 1500) return;
     try{
       const v = await state.char.readValue();
-      const d = v.getFloat32(0, true);
-      if (isFinite(d) && d > 0.01 && d !== state.lastPoll){
-        state.lastPoll = d;
+      const d = parseDistance(v);
+      if (d !== null && acceptDistance(d)){
         const el = document.getElementById("dbg");
         if (el) el.textContent = "轮询读到: " + d.toFixed(4) + " m";
         handleMeasurement(d);
@@ -616,6 +640,7 @@
   fits.unordered = setupCanvas($("cvUn"), ()=>{ if (state.candidates.length) selectCand(state.candIndex); });
   fits.quick = setupCanvas($("cvQuick"), ()=>{ if (state.quickVerts.length) buildQuick(); });
   renderChips(); renderQuickFields();
+  setInterval(pollMeas, 700);
   setStatus(navigator.bluetooth ? "未连接" : "浏览器不支持蓝牙");
 })();
 </script>

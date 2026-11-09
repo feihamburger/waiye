@@ -1,4 +1,4 @@
-const CACHE = "field-survey-v2";
+const CACHE = "field-survey-v5";
 const ASSETS = ["./", "./index.html", "./matcher.js"];
 
 self.addEventListener("install", (e) => {
