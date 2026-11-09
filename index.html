@@ -64,7 +64,7 @@
 </head>
 <body>
 <header>
-  <h1>现场测图</h1>
+  <h1>现场测图 <span style="font-size:11px;color:#8b98ad">v2</span></h1>
   <span id="st">未连接</span>
   <button id="btnConn" class="primary">连接徕卡</button>
 </header>
@@ -109,6 +109,7 @@
   </div>
   <canvas id="cvUn"></canvas>
   <div id="unTable"></div>
+  <div id="dbg" class="muted" style="margin-top:8px"></div>
 </section>
 
 <section id="page-quick" class="page">
@@ -161,7 +162,8 @@
     device: null, char: null, connected: false, connecting: false,
     points: [], segments: [], closed: false, drawMode: true, sel: null,
     lengths: [], receiving: false, candidates: [], candIndex: 0,
-    rot: 0, mirror: false, quickVerts: []
+    rot: 0, mirror: false, quickVerts: [],
+    pollTimer: null, lastPoll: null, lastNotify: 0
   };
 
   function toast(msg){
@@ -189,21 +191,30 @@
       const server = await device.gatt.connect();
       const svc = await server.getPrimaryService(SERVICE);
       const ch = await svc.getCharacteristic(MEAS);
-      await ch.startNotifications();
-      ch.addEventListener("characteristicvaluechanged", onMeas);
+      let started = 0;
+      try {
+        const chars = await svc.getCharacteristics();
+        for (const c of chars) {
+          if (c.properties.notify || c.properties.indicate) {
+            try { await c.startNotifications(); c.addEventListener("characteristicvaluechanged", onMeas); started++; } catch(e) {}
+          }
+        }
+      } catch(e) {
+        await ch.startNotifications();
+        ch.addEventListener("characteristicvaluechanged", onMeas);
+        started = 1;
+      }
       state.device = device; state.char = ch; state.connected = true;
-      setStatus("已连接 " + (device.name || "DISTO"));
+      setStatus("已连接 " + (device.name || "DISTO") + " · 通知" + started);
       $("btnConn").textContent = "断开";
+      if (state.pollTimer) clearInterval(state.pollTimer);
+      state.pollTimer = setInterval(pollMeas, 700);
     }catch(e){
       setStatus("连接失败"); toast(e.message || "连接失败");
     }finally{ state.connecting = false; }
   }
 
-  function onMeas(ev){
-    const dv = ev.target.value;
-    if (!dv || dv.byteLength < 4) return;
-    const d = dv.getFloat32(0, true);
-    if (!isFinite(d)) return;
+  function handleMeasurement(d){
     if (state.mode === "sketch"){
       if (state.sel != null){
         state.segments[state.sel].len = d;
@@ -217,6 +228,40 @@
     } else if (state.mode === "quick"){
       fillNextQuick(d);
     }
+  }
+
+  let dbgCount = 0;
+  function onMeas(ev){
+    const ch = ev.target;
+    const dv = ch.value;
+    if (!dv) return;
+    const uuid = (ch.uuid || "").toLowerCase();
+    const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+    const hex = [...bytes].slice(0, 20).map(b => b.toString(16).padStart(2, "0")).join(" ");
+    dbgCount++;
+    const el = document.getElementById("dbg");
+    if (el) el.textContent = "已收到 " + dbgCount + " 包 (" + uuid.slice(4, 8) + "): " + hex;
+    state.lastNotify = Date.now();
+    if (!uuid.startsWith("3ab1010d")) return;
+    if (dv.byteLength < 4) return;
+    const d = dv.getFloat32(0, true);
+    if (!isFinite(d)) return;
+    handleMeasurement(d);
+  }
+
+  async function pollMeas(){
+    if (!state.connected || state.mode !== "unordered" || !state.receiving) return;
+    if (Date.now() - (state.lastNotify || 0) < 1500) return;
+    try{
+      const v = await state.char.readValue();
+      const d = v.getFloat32(0, true);
+      if (isFinite(d) && d > 0.01 && d !== state.lastPoll){
+        state.lastPoll = d;
+        const el = document.getElementById("dbg");
+        if (el) el.textContent = "轮询读到: " + d.toFixed(4) + " m";
+        handleMeasurement(d);
+      }
+    }catch(e){}
   }
 
   // ---------------- 画布工具 ----------------
