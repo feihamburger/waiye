@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>现场测图</title>
+<style>
+  :root{--bg:#0b1220;--panel:#111a2c;--line:#22304a;--text:#e6edf7;--muted:#8b98ad;
+        --accent:#3b82f6;--green:#22c55e;--amber:#f59e0b;--red:#ef4444}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  body{padding-bottom:70px}
+  header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:8px;
+    padding:10px 12px;background:rgba(11,18,32,.96);border-bottom:1px solid var(--line)}
+  header h1{font-size:16px;margin:0;flex:1;font-weight:650}
+  #st{font-size:12px;color:var(--muted);max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  button{min-height:44px;padding:0 14px;border-radius:10px;border:1px solid var(--line);
+    background:#152137;color:var(--text);font-size:14px}
+  button.primary{background:linear-gradient(135deg,#2563eb,#3b82f6);border-color:#3b82f6;font-weight:600}
+  button:active{filter:brightness(1.15)}
+  select,input{background:#0f1728;color:var(--text);border:1px solid var(--line);
+    border-radius:10px;padding:9px;font-size:14px}
+  .page{display:none;padding:10px 12px 14px}
+  .page.on{display:block}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+  .row > button{flex:0 0 auto}
+  canvas{width:100%;background:#fff;border-radius:12px;display:block;touch-action:none}
+  #cvSketch{height:44vh}
+  #cvUn{height:34vh}
+  #cvQuick{height:36vh}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .chip{background:#152137;border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-size:13px}
+  .muted{color:var(--muted);font-size:12.5px;line-height:1.5}
+  .cands{display:flex;gap:8px;overflow-x:auto;padding:4px 0}
+  .cand{flex:0 0 auto;width:140px;background:var(--panel);border:2px solid var(--line);
+    border-radius:12px;padding:6px;color:var(--text)}
+  .cand.on{border-color:var(--green)}
+  .cand svg{width:100%;height:84px;display:block}
+  .cand .t{font-size:12px;margin-top:2px}
+  .cand .s{font-size:11px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+  th,td{padding:5px 6px;border-bottom:1px solid #1b2740;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600}
+  .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;background:#0e1626;
+    border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:30}
+  .tabbar button{flex:1;border:0;border-radius:0;background:transparent;color:var(--muted);
+    font-size:13px;min-height:56px}
+  .tabbar button.on{color:#fff;background:#152137}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;
+    align-items:center;justify-content:center;padding:16px;z-index:60}
+  .modal.on{display:flex}
+  .modal .box{background:#111a2c;border:1px solid var(--line);border-radius:14px;
+    padding:14px;width:100%;max-width:440px}
+  .modal h3{margin:0 0 8px;font-size:15px}
+  textarea{width:100%;height:180px;background:#0f1728;color:#fff;border:1px solid var(--line);
+    border-radius:10px;padding:10px;font-family:ui-monospace,Consolas,monospace;font-size:14px}
+  #toast{position:fixed;left:50%;bottom:86px;transform:translateX(-50%);
+    background:#1f2b44;border:1px solid var(--line);color:#fff;padding:9px 14px;
+    border-radius:999px;font-size:13px;opacity:0;transition:.25s;z-index:80;pointer-events:none}
+  #toast.on{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>现场测图</h1>
+  <span id="st">未连接</span>
+  <button id="btnConn" class="primary">连接徕卡</button>
+</header>
+
+<section id="page-sketch" class="page on">
+  <div class="row">
+    <button id="skFinish">完成绘制</button>
+    <button id="skClose">闭合</button>
+    <button id="skUndo">撤销</button>
+    <button id="skManual">手动输入</button>
+    <button id="skExport">导出</button>
+  </div>
+  <canvas id="cvSketch"></canvas>
+  <div id="skInfo" class="muted" style="margin-top:8px">点击画布加点；完成后点线段选中，按徕卡测量（可任意顺序）。</div>
+</section>
+
+<section id="page-unordered" class="page">
+  <div class="row">
+    <button id="unRecv">开始接收蓝牙</button>
+    <button id="unManual">手动输入</button>
+    <button id="unClear">清空</button>
+  </div>
+  <div id="unChips" class="chips"></div>
+  <div class="row">
+    <select id="unTpl">
+      <option value="auto">自动判断</option>
+      <option value="rect">矩形</option>
+      <option value="L">L 形</option>
+      <option value="U">U 形</option>
+      <option value="T">T 形</option>
+      <option value="stair">阶梯形</option>
+    </select>
+    <input id="unTol" type="number" value="30" style="width:74px" title="容差(mm)">
+    <label class="muted"><input id="unMin" type="checkbox"> 最少边(2/4/6)</label>
+    <button id="unMatch" class="primary">识别</button>
+  </div>
+  <div id="unCands" class="cands"></div>
+  <div class="row">
+    <button id="unRot">旋转 90°</button>
+    <button id="unMir">镜像</button>
+    <button id="unExport">导出</button>
+  </div>
+  <canvas id="cvUn"></canvas>
+  <div id="unTable"></div>
+</section>
+
+<section id="page-quick" class="page">
+  <div class="row">
+    <select id="qTpl">
+      <option value="rect">矩形</option>
+      <option value="L">L 形</option>
+      <option value="U">U 形</option>
+      <option value="T">T 形</option>
+    </select>
+    <button id="qGen" class="primary">生成</button>
+    <button id="qClear">清空</button>
+    <button id="qExport">导出</button>
+  </div>
+  <div id="qFields" class="row"></div>
+  <canvas id="cvQuick"></canvas>
+  <div class="muted" style="margin-top:8px">填最少边长即可；连蓝牙后按测量键会自动填下一个空字段。</div>
+</section>
+
+<nav class="tabbar">
+  <button data-tab="sketch" class="on">手绘</button>
+  <button data-tab="unordered">无序识别</button>
+  <button data-tab="quick">快速建图</button>
+</nav>
+
+<div id="modal" class="modal">
+  <div class="box">
+    <h3 id="mTitle">手动输入</h3>
+    <div id="mHint" class="muted" style="margin-bottom:8px"></div>
+    <textarea id="mText" spellcheck="false"></textarea>
+    <div class="row" style="justify-content:flex-end">
+      <button id="mCancel">取消</button>
+      <button id="mOk" class="primary">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="matcher.js"></script>
+<script>
+(function(){
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const SERVICE = "3ab10100-f831-4395-b29d-570977d5bf94";
+  const MEAS = "3ab1010d-f831-4395-b29d-570977d5bf94";
+
+  const state = {
+    mode: "sketch",
+    device: null, char: null, connected: false, connecting: false,
+    points: [], segments: [], closed: false, drawMode: true, sel: null,
+    lengths: [], receiving: false, candidates: [], candIndex: 0,
+    rot: 0, mirror: false, quickVerts: []
+  };
+
+  function toast(msg){
+    const t = $("toast"); t.textContent = msg; t.classList.add("on");
+    clearTimeout(t._tm); t._tm = setTimeout(()=>t.classList.remove("on"), 1600);
+  }
+  function setStatus(txt){ $("st").textContent = txt; }
+
+  // ---------------- 蓝牙 ----------------
+  async function connect(){
+    if (!navigator.bluetooth){ toast("这个浏览器不支持 Web Bluetooth"); return; }
+    if (state.connected){ try{ state.device.gatt.disconnect(); }catch(e){} return; }
+    if (state.connecting) return;
+    state.connecting = true;
+    setStatus("连接中…");
+    try{
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: "DISTO" }],
+        optionalServices: [SERVICE]
+      });
+      device.addEventListener("gattserverdisconnected", () => {
+        state.connected = false; state.char = null;
+        setStatus("已断开"); $("btnConn").textContent = "连接徕卡";
+      });
+      const server = await device.gatt.connect();
+      const svc = await server.getPrimaryService(SERVICE);
+      const ch = await svc.getCharacteristic(MEAS);
+      await ch.startNotifications();
+      ch.addEventListener("characteristicvaluechanged", onMeas);
+      state.device = device; state.char = ch; state.connected = true;
+      setStatus("已连接 " + (device.name || "DISTO"));
+      $("btnConn").textContent = "断开";
+    }catch(e){
+      setStatus("连接失败"); toast(e.message || "连接失败");
+    }finally{ state.connecting = false; }
+  }
+
+  function onMeas(ev){
+    const dv = ev.target.value;
+    if (!dv || dv.byteLength < 4) return;
+    const d = dv.getFloat32(0, true);
+    if (!isFinite(d)) return;
+    if (state.mode === "sketch"){
+      if (state.sel != null){
+        state.segments[state.sel].len = d;
+        drawSketch(); skInfo();
+      } else toast("先在画布上点一条线段");
+    } else if (state.mode === "unordered"){
+      if (state.receiving){
+        state.lengths.push(d); renderChips();
+        setStatus("收到 " + d.toFixed(4) + " m（共 " + state.lengths.length + " 条）");
+      } else toast("点「开始接收蓝牙」后再测");
+    } else if (state.mode === "quick"){
+      fillNextQuick(d);
+    }
+  }
+
+  // ---------------- 画布工具 ----------------
+  function setupCanvas(cv, redraw){
+    const fit = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const r = cv.getBoundingClientRect();
+      cv.width = Math.max(1, Math.round(r.width * dpr));
+      cv.height = Math.max(1, Math.round(r.height * dpr));
+      const ctx = cv.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      redraw();
+    };
+    window.addEventListener("resize", fit);
+    setTimeout(fit, 40);
+    return fit;
+  }
+
+  function drawPolygon(cv, verts, lengths, opts){
+    const ctx = cv.getContext("2d");
+    const W = cv.clientWidth, H = cv.clientHeight;
+    ctx.clearRect(0, 0, W, H);
+    if (!verts || !verts.length) return;
+    const xs = verts.map(p=>p[0]), ys = verts.map(p=>p[1]);
+    const minx = Math.min(...xs), maxx = Math.max(...xs);
+    const miny = Math.min(...ys), maxy = Math.max(...ys);
+    const pad = 38;
+    const s = Math.min((W - 2*pad) / Math.max(0.1, maxx-minx), (H - 2*pad) / Math.max(0.1, maxy-miny));
+    const ox = (W - (maxx-minx)*s)/2, oy = (H - (maxy-miny)*s)/2;
+    const T = (p) => [ox + (p[0]-minx)*s, H - oy - (p[1]-miny)*s];
+    const pts = verts.map(T);
+    ctx.beginPath();
+    pts.forEach((p,i)=> i ? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1]));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(59,130,246,.12)";
+    ctx.fill();
+    ctx.strokeStyle = "#1d4ed8"; ctx.lineWidth = 2.4; ctx.stroke();
+    const cx = verts.reduce((a,p)=>a+p[0],0)/verts.length;
+    const cy = verts.reduce((a,p)=>a+p[1],0)/verts.length;
+    ctx.font = "600 12px ui-monospace,Consolas,monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    verts.forEach((p,i)=>{
+      const q = verts[(i+1)%verts.length];
+      const [sx,sy] = T([(p[0]+q[0])/2, (p[1]+q[1])/2]);
+      const [scx,scy] = T([cx,cy]);
+      let nx = sx-scx, ny = sy-scy;
+      const nl = Math.hypot(nx,ny) || 1;
+      nx = nx/nl*20; ny = ny/nl*20;
+      const txt = (lengths && lengths[i] != null) ? lengths[i].toFixed(3) : "";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(255,255,255,.9)";
+      ctx.strokeText(txt, sx+nx, sy+ny);
+      ctx.fillStyle = "#0d47a1";
+      ctx.fillText(txt, sx+nx, sy+ny);
+    });
+    pts.forEach(p=>{
+      ctx.beginPath(); ctx.arc(p[0],p[1],3,0,Math.PI*2);
+      ctx.fillStyle = "#1d4ed8"; ctx.fill();
+    });
+  }
+
+  // ---------------- 手绘 ----------------
+  const sk = state;
+  function skInfo(){
+    const done = sk.segments.filter(s=>s.len != null).length;
+    $("skInfo").textContent = `${sk.segments.length} 条边，已测 ${done} 条` +
+      (sk.sel != null ? `；已选第 ${sk.sel+1} 条` : "；点线段选中后测量");
+  }
+  function drawSketch(){
+    const cv = $("cvSketch"), ctx = cv.getContext("2d");
+    const W = cv.clientWidth, H = cv.clientHeight;
+    ctx.clearRect(0,0,W,H);
+    sk.segments.forEach((s,i)=>{
+      const on = i === sk.sel;
+      ctx.beginPath(); ctx.moveTo(s.a[0], s.a[1]); ctx.lineTo(s.b[0], s.b[1]);
+      ctx.strokeStyle = on ? "#dc2626" : "#1d4ed8";
+      ctx.lineWidth = on ? 4 : 2.5; ctx.stroke();
+      if (s.len != null){
+        const mx = (s.a[0]+s.b[0])/2, my = (s.a[1]+s.b[1])/2;
+        ctx.font = "600 12px ui-monospace,Consolas,monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(255,255,255,.9)";
+        ctx.strokeText(s.len.toFixed(3), mx, my-10);
+        ctx.fillStyle = on ? "#dc2626" : "#0d47a1";
+        ctx.fillText(s.len.toFixed(3), mx, my-10);
+      }
+    });
+    sk.points.forEach(p=>{
+      ctx.beginPath(); ctx.arc(p[0],p[1],3.5,0,Math.PI*2);
+      ctx.fillStyle = "#111"; ctx.fill();
+    });
+    skInfo();
+  }
+  function hitSeg(x,y){
+    let best = null, bd = 18;
+    sk.segments.forEach((s,i)=>{
+      const d = distSeg(x,y,s.a,s.b);
+      if (d < bd){ bd = d; best = i; }
+    });
+    return best;
+  }
+  function distSeg(px,py,a,b){
+    const dx=b[0]-a[0], dy=b[1]-a[1];
+    const l2=dx*dx+dy*dy;
+    if (!l2) return Math.hypot(px-a[0],py-a[1]);
+    let t=((px-a[0])*dx+(py-a[1])*dy)/l2;
+    t=Math.max(0,Math.min(1,t));
+    return Math.hypot(px-(a[0]+t*dx), py-(a[1]+t*dy));
+  }
+  $("cvSketch").addEventListener("pointerdown", (e)=>{
+    const r = e.target.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (sk.drawMode){
+      sk.points.push([x,y]);
+      if (sk.points.length >= 2){
+        sk.segments.push({ a: sk.points[sk.points.length-2], b: sk.points[sk.points.length-1], len: null });
+      }
+      drawSketch();
+    } else {
+      const i = hitSeg(x,y);
+      if (i != null){ sk.sel = i; drawSketch(); }
+    }
+  });
+  $("skFinish").onclick = ()=>{ if (sk.segments.length){ sk.drawMode = false; toast("已结束绘制，点线段选中"); } };
+  $("skUndo").onclick = ()=>{ if (sk.drawMode && sk.points.length){ sk.points.pop(); sk.segments.pop(); drawSketch(); } };
+  $("skClose").onclick = ()=>{
+    if (sk.closed || sk.points.length < 3) return;
+    const a = sk.points[sk.points.length-1], b = sk.points[0];
+    if (Math.hypot(a[0]-b[0], a[1]-b[1]) > 3){
+      sk.segments.push({ a, b, len: null });
+    }
+    sk.closed = true; sk.drawMode = false; drawSketch();
+  };
+  $("skManual").onclick = ()=>{
+    if (!sk.segments.length){ toast("先画轮廓"); return; }
+    openManual("手动输入每段长度", "按线段顺序每行一个；空格/逗号分隔也可以。",
+      sk.segments.map(s=>s.len!=null ? s.len.toFixed(4) : ""), (nums)=>{
+        if (nums.length !== sk.segments.length){ toast("数量要和线段数一致"); return; }
+        nums.forEach((v,i)=> sk.segments[i].len = v);
+        drawSketch();
+      });
+  };
+  $("skExport").onclick = ()=>{
+    if (!sk.segments.length){ toast("还没有线段"); return; }
+    let lines = ["序号,长度(m),起点x,起点y,终点x,终点y"];
+    sk.segments.forEach((s,i)=>{
+      lines.push([i+1, s.len==null?"":s.len.toFixed(4), s.a[0].toFixed(1), s.a[1].toFixed(1),
+        s.b[0].toFixed(1), s.b[1].toFixed(1)].join(","));
+    });
+    download("sketch.csv", lines.join("\n"));
+  };
+
+  // ---------------- 无序 ----------------
+  function renderChips(){
+    const box = $("unChips"); box.innerHTML = "";
+    state.lengths.forEach((v,i)=>{
+      const el = document.createElement("span");
+      el.className = "chip"; el.textContent = (i+1) + ". " + v.toFixed(4);
+      box.appendChild(el);
+    });
+    if (!state.lengths.length) box.innerHTML = '<span class="muted">还没有长度</span>';
+  }
+  $("unRecv").onclick = ()=>{
+    state.receiving = !state.receiving;
+    $("unRecv").textContent = state.receiving ? "停止接收" : "开始接收蓝牙";
+    toast(state.receiving ? "接收中：按测量键" : "已停止接收");
+  };
+  $("unManual").onclick = ()=>{
+    openManual("手动输入长度", "每行一个，或用逗号/空格分隔；顺序随意。",
+      state.lengths.map(v=>v.toFixed(4)), (nums)=>{
+        state.lengths = nums; renderChips(); resetCands();
+        if (nums.length && ![2,4,6,8].includes(nums.length)) toast("可以是 2/4/6（最少边）或 4/6/8（完整边）");
+      });
+  };
+  $("unClear").onclick = ()=>{ state.lengths = []; renderChips(); resetCands(); };
+  function resetCands(){
+    state.candidates = []; state.candIndex = 0; state.rot = 0; state.mirror = false;
+    $("unCands").innerHTML = ""; $("unTable").innerHTML = "";
+    const cv = $("cvUn"); cv.getContext("2d").clearRect(0,0,cv.clientWidth,cv.clientHeight);
+  }
+  $("unMatch").onclick = ()=>{
+    const minimal = $("unMin").checked;
+    const tpl = $("unTpl").value;
+    const tol = Math.max(1, Number($("unTol").value) || 30);
+    const n = state.lengths.length;
+    if (minimal){
+      if (![2,4,6].includes(n)){ toast("最少边需要 2 / 4 / 6 个值"); return; }
+      var res = TemplateMatch.matchMinimal(state.lengths, { template: tpl });
+    } else {
+      if (![4,6,8].includes(n)){ toast("完整边需要 4 / 6 / 8 个值"); return; }
+      var res = TemplateMatch.match(state.lengths, { tolMm: tol, template: tpl });
+    }
+    if (res.error){ toast(res.error); return; }
+    state.candidates = res.candidates || [];
+    state.candIndex = 0; state.rot = 0; state.mirror = false;
+    renderCands();
+    if (!state.candidates.length){ toast("没有匹配，换个模板或调容差"); return; }
+    selectCand(0);
+  };
+  function minSvg(verts){
+    const W=140, H=84, pad=10;
+    const xs=verts.map(p=>p[0]), ys=verts.map(p=>p[1]);
+    const minx=Math.min(...xs), maxx=Math.max(...xs), miny=Math.min(...ys), maxy=Math.max(...ys);
+    const s=Math.min((W-2*pad)/Math.max(.1,maxx-minx),(H-2*pad)/Math.max(.1,maxy-miny));
+    const ox=(W-(maxx-minx)*s)/2, oy=(H-(maxy-miny)*s)/2;
+    const pts=verts.map(p=>[ox+(p[0]-minx)*s, H-oy-(p[1]-miny)*s].map(v=>v.toFixed(1)).join(",")).join(" ");
+    return `<svg viewBox="0 0 ${W} ${H}"><polygon points="${pts}" fill="rgba(59,130,246,.15)" stroke="#60a5fa" stroke-width="2"/></svg>`;
+  }
+  function renderCands(){
+    const box = $("unCands"); box.innerHTML = "";
+    state.candidates.forEach((c,i)=>{
+      const el = document.createElement("div");
+      el.className = "cand" + (i===0?" on":"");
+      el.innerHTML = minSvg(c.vertices) +
+        `<div class="t">${c.name}</div>` +
+        `<div class="s">残差 ${(c.residualMm||0).toFixed(1)} mm</div>` +
+        `<div class="s">面积 ${c.area.toFixed(2)} m²</div>`;
+      el.onclick = ()=> selectCand(i);
+      box.appendChild(el);
+    });
+  }
+  function viewVerts(verts){
+    let v = verts.map(p=> state.mirror ? [-p[0], p[1]] : [p[0], p[1]]);
+    for (let k=0;k<state.rot;k++) v = v.map(p=>[p[1], -p[0]]);
+    const minx = Math.min(...v.map(p=>p[0])), miny = Math.min(...v.map(p=>p[1]));
+    return v.map(p=>[p[0]-minx, p[1]-miny]);
+  }
+  function selectCand(i){
+    state.candIndex = i;
+    [...$("unCands").children].forEach((el,k)=> el.classList.toggle("on", k===i));
+    const c = state.candidates[i];
+    const verts = viewVerts(c.vertices);
+    const lengths = c.assignment ? c.assignment.map(a=>a.fitted) : null;
+    drawPolygon($("cvUn"), verts, lengths);
+    let rows = "";
+    if (c.assignment){
+      c.assignment.forEach(a=>{
+        const m = a.measured != null ? a.measured.toFixed(4) : "";
+        const d = a.measured != null ? ((a.fitted-a.measured)*1000).toFixed(1) : "";
+        rows += `<tr><td>${a.edge}</td><td>${m}</td><td>${a.fitted.toFixed(4)}</td><td>${d}</td></tr>`;
+      });
+    }
+    $("unTable").innerHTML = `<table><thead><tr><th>边</th><th>测量(m)</th><th>拟合(m)</th><th>差(mm)</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  $("unRot").onclick = ()=>{ if(!state.candidates.length) return; state.rot=(state.rot+1)%4; selectCand(state.candIndex); };
+  $("unMir").onclick = ()=>{ if(!state.candidates.length) return; state.mirror=!state.mirror; selectCand(state.candIndex); };
+  $("unExport").onclick = ()=>{
+    if (!state.candidates.length){ toast("先识别"); return; }
+    const c = state.candidates[state.candIndex];
+    const verts = viewVerts(c.vertices);
+    let lines = ["形状,"+c.name, "残差(mm),"+((c.residualMm||0).toFixed(2)), "面积(m2),"+c.area.toFixed(3), "",
+      "边,测量(m),拟合(m),起点x,起点y,终点x,终点y"];
+    (c.assignment||[]).forEach((a,i)=>{
+      const p=verts[i], q=verts[(i+1)%verts.length];
+      lines.push([a.edge, a.measured!=null?a.measured.toFixed(4):"", a.fitted.toFixed(4),
+        p[0].toFixed(3),p[1].toFixed(3),q[0].toFixed(3),q[1].toFixed(3)].join(","));
+    });
+    download("unordered.csv", lines.join("\n"));
+  };
+
+  // ---------------- 快速建图 ----------------
+  const QSPEC = {
+    rect: { labels:["长","宽"], build:v=>[[0,0],[v[0],0],[v[0],v[1]],[0,v[1]]] },
+    L: { labels:["总长 W","侧高 H-nh","缺口宽 nw","缺口高 nh"],
+         build:v=>[[0,0],[v[0],0],[v[0],v[1]],[v[0]-v[2],v[1]],[v[0]-v[2],v[1]+v[3]],[0,v[1]+v[3]]] },
+    U: { labels:["总宽 W","总高 H","臂宽 rw","内侧高 H-hb"],
+         build:v=>[[0,0],[v[0],0],[v[0],v[1]],[v[0]-v[2],v[1]],[v[0]-v[2],v[1]-v[3]],[v[2],v[1]-v[3]],[v[2],v[1]],[0,v[1]]] },
+    T: { labels:["底宽 W","凸出高 th","侧高 H-th","顶宽 sw"],
+         build:v=>[[0,0],[v[0],0],[v[0],v[2]],[(v[0]+v[3])/2,v[2]],[(v[0]+v[3])/2,v[2]+v[1]],[(v[0]-v[3])/2,v[2]+v[1]],[(v[0]-v[3])/2,v[2]],[0,v[2]]] }
+  };
+  function renderQuickFields(){
+    const spec = QSPEC[$("qTpl").value];
+    const box = $("qFields"); box.innerHTML = "";
+    spec.labels.forEach((lab,i)=>{
+      const wrap = document.createElement("label");
+      wrap.className = "muted";
+      wrap.style.flex = "1 1 44%";
+      wrap.innerHTML = lab + '<br>';
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.step = "0.001"; inp.style.width = "100%";
+      inp.dataset.i = i;
+      wrap.appendChild(inp);
+      box.appendChild(wrap);
+    });
+  }
+  function buildQuick(){
+    const spec = QSPEC[$("qTpl").value];
+    const vals = [...$("qFields").querySelectorAll("input")].map(el=>Number(el.value));
+    if (vals.some(v=>!isFinite(v)||v<=0)){ toast("把每个值都填上"); return; }
+    const verts = spec.build(vals);
+    state.quickVerts = verts;
+    const lengths = verts.map((p,i)=>{
+      const q=verts[(i+1)%verts.length];
+      return Math.hypot(q[0]-p[0], q[1]-p[1]);
+    });
+    drawPolygon($("cvQuick"), verts, lengths);
+  }
+  function fillNextQuick(d){
+    const inputs = [...$("qFields").querySelectorAll("input")];
+    const el = inputs.find(i=>!i.value.trim());
+    if (el){ el.value = d.toFixed(4); }
+    if (inputs.every(i=>i.value.trim())) buildQuick(); else toast("收到 "+d.toFixed(4)+" m");
+  }
+  $("qTpl").onchange = ()=>{ renderQuickFields(); state.quickVerts=[]; const cv=$("cvQuick"); cv.getContext("2d").clearRect(0,0,cv.clientWidth,cv.clientHeight); };
+  $("qGen").onclick = buildQuick;
+  $("qClear").onclick = ()=>{ $("qFields").querySelectorAll("input").forEach(i=>i.value=""); state.quickVerts=[]; const cv=$("cvQuick"); cv.getContext("2d").clearRect(0,0,cv.clientWidth,cv.clientHeight); };
+  $("qExport").onclick = ()=>{
+    if (!state.quickVerts.length){ toast("先生成"); return; }
+    const verts = state.quickVerts;
+    let lines = ["边,长度(m),起点x,起点y,终点x,终点y"];
+    verts.forEach((p,i)=>{
+      const q=verts[(i+1)%verts.length];
+      lines.push([i+1, Math.hypot(q[0]-p[0],q[1]-p[1]).toFixed(4),
+        p[0].toFixed(3),p[1].toFixed(3),q[0].toFixed(3),q[1].toFixed(3)].join(","));
+    });
+    download("quick.csv", lines.join("\n"));
+  };
+
+  // ---------------- 通用 ----------------
+  function openManual(title, hint, initial, cb){
+    $("mTitle").textContent = title;
+    $("mHint").textContent = hint;
+    $("mText").value = (initial || []).join("\n");
+    $("modal").classList.add("on");
+    $("mOk").onclick = ()=>{
+      const nums = ($("mText").value.match(/-?\d+(?:\.\d+)?/g) || []).map(Number).filter(v=>isFinite(v)&&v>0);
+      $("modal").classList.remove("on");
+      if (nums.length) cb(nums);
+    };
+    $("mCancel").onclick = ()=> $("modal").classList.remove("on");
+  }
+  function download(name, text){
+    const blob = new Blob(["\ufeff"+text], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  }
+
+  // ---------------- 切换 ----------------
+  const fits = {};
+  function switchTab(name){
+    state.mode = name;
+    document.querySelectorAll(".page").forEach(p=> p.classList.toggle("on", p.id === "page-"+name));
+    document.querySelectorAll(".tabbar button").forEach(b=> b.classList.toggle("on", b.dataset.tab === name));
+    setTimeout(()=>{ if (fits[name]) fits[name](); }, 30);
+    if (name === "unordered") renderChips();
+  }
+  document.querySelectorAll(".tabbar button").forEach(b=> b.onclick = ()=> switchTab(b.dataset.tab));
+  $("btnConn").onclick = connect;
+
+  // 初始化
+  fits.sketch = setupCanvas($("cvSketch"), drawSketch);
+  fits.unordered = setupCanvas($("cvUn"), ()=>{ if (state.candidates.length) selectCand(state.candIndex); });
+  fits.quick = setupCanvas($("cvQuick"), ()=>{ if (state.quickVerts.length) buildQuick(); });
+  renderChips(); renderQuickFields();
+  setStatus(navigator.bluetooth ? "未连接" : "浏览器不支持蓝牙");
+})();
+</script>
+<script>if ("serviceWorker" in navigator) { navigator.serviceWorker.register("sw.js").catch(function(){}); }</script></body>
+</html>
